@@ -1,3 +1,13 @@
+Set up your credentials in your .env file like this:
+
+```yml
+# old database details to transfer data
+SS_DATABASE_NAME_OLD_DB="old_db"
+SS_DATABASE_SERVER_OLD_DB="localhost"
+SS_DATABASE_USERNAME_OLD_DB="old_db_user"
+SS_DATABASE_PASSWORD_OLD_DB="old_db_password"
+```
+
 Set up your schema in a yml file like this:
 
 ```yml

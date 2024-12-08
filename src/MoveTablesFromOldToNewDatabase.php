@@ -87,10 +87,10 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         if (! $this->databaseHostOldDB || ! $this->userNameOldDB || ! $this->passwordOldDB || ! $this->databaseNameOldDB) {
             throw new Exception('Please provide all the required database configurations for the old database: SS_DATABASE_HOST_OLD_DB, SS_DATABASE_USERNAME_OLD_DB, SS_DATABASE_PASSWORD_OLD_DB, SS_DATABASE_NAME_OLD_DB');
         }
-        $this->databaseHostNewDB = Environment::getEnv('SS_DATABASE_HOST_') ?: 'localhost';
-        $this->userNameNewDB = Environment::getEnv('SS_DATABASE_USERNAME_');
-        $this->passwordNewDB = Environment::getEnv('SS_DATABASE_PASSWORD_');
-        $this->databaseNameNewDB = Environment::getEnv('SS_DATABASE_NAME_');
+        $this->databaseHostNewDB = Environment::getEnv('SS_DATABASE_HOST') ?: 'localhost';
+        $this->userNameNewDB = Environment::getEnv('SS_DATABASE_USERNAME');
+        $this->passwordNewDB = Environment::getEnv('SS_DATABASE_PASSWORD');
+        $this->databaseNameNewDB = Environment::getEnv('SS_DATABASE_NAME');
         if (! $this->databaseHostNewDB || ! $this->userNameNewDB || ! $this->passwordNewDB || ! $this->databaseNameNewDB) {
             throw new Exception('Please provide all the required database configurations for the new database: SS_DATABASE_HOST_, SS_DATABASE_USERNAME_, SS_DATABASE_PASSWORD_, SS_DATABASE_NAME_');
         }
