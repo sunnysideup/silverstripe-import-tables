@@ -28,10 +28,6 @@
     },
     "minimum-stability": "dev",
     "prefer-stable": true,
-    "bin": [
-        "bin/npm-build-import-tables.sh",
-        "bin/npm-watch-import-tables.sh"
-    ],
     "authors": [
         {
             "name": "Nicolaas Thiemen Francken",
