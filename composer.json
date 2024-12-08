@@ -7,7 +7,8 @@
         "tranfer",
         "old website",
         "move website",
-        "new website"
+        "new website",
+        "migrate"
     ],
     "license": "BSD-3-Clause",
     "require": {

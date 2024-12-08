@@ -1,1 +1,17 @@
-
+---
+Name: app_import_tables
+---
+Sunnysideup\ImportTables\MoveTablesFromOldToNewDatabase:
+  classes_to_move:
+    - MyClassOne
+    - MyClassTwo
+  tables_to_move:
+    - MyTableOne
+    - MyTableTwo
+  tables_to_skip:
+    - MyTableThree
+    - MyTableFour
+  fields_to_skip:
+    MyTableOne:
+      - FieldOne
+      - FieldTwo
