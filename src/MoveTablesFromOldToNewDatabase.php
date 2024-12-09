@@ -80,19 +80,29 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function getDbConfigs()
     {
-        $this->databaseHostOldDB = Environment::getEnv('SS_DATABASE_HOST_OLD_DB') ?: 'localhost';
+        $this->databaseHostOldDB = Environment::getEnv('SS_DATABASE_SERVER_OLD_DB') ?: 'localhost';
         $this->userNameOldDB = Environment::getEnv('SS_DATABASE_USERNAME_OLD_DB');
         $this->passwordOldDB = Environment::getEnv('SS_DATABASE_PASSWORD_OLD_DB');
         $this->databaseNameOldDB = Environment::getEnv('SS_DATABASE_NAME_OLD_DB');
         if (! $this->databaseHostOldDB || ! $this->userNameOldDB || ! $this->passwordOldDB || ! $this->databaseNameOldDB) {
-            throw new Exception('Please provide all the required database configurations for the old database: SS_DATABASE_HOST_OLD_DB, SS_DATABASE_USERNAME_OLD_DB, SS_DATABASE_PASSWORD_OLD_DB, SS_DATABASE_NAME_OLD_DB');
+            throw new Exception(
+                '
+                Please provide all the required database configurations for the old database:
+                    SS_DATABASE_SERVER_OLD_DB,
+                    SS_DATABASE_USERNAME_OLD_DB,
+                    SS_DATABASE_PASSWORD_OLD_DB,
+                    SS_DATABASE_NAME_OLD_DB'
+            );
         }
-        $this->databaseHostNewDB = Environment::getEnv('SS_DATABASE_HOST') ?: 'localhost';
+        $this->databaseHostNewDB = Environment::getEnv('SS_DATABASE_SERVER') ?: 'localhost';
         $this->userNameNewDB = Environment::getEnv('SS_DATABASE_USERNAME');
         $this->passwordNewDB = Environment::getEnv('SS_DATABASE_PASSWORD');
         $this->databaseNameNewDB = Environment::getEnv('SS_DATABASE_NAME');
         if (! $this->databaseHostNewDB || ! $this->userNameNewDB || ! $this->passwordNewDB || ! $this->databaseNameNewDB) {
-            throw new Exception('Please provide all the required database configurations for the new database: SS_DATABASE_HOST_, SS_DATABASE_USERNAME_, SS_DATABASE_PASSWORD_, SS_DATABASE_NAME_');
+            throw new Exception('
+                Please provide all the required database configurations for the new database:
+                SS_DATABASE_SERVER, SS_DATABASE_USERNAME, SS_DATABASE_PASSWORD, SS_DATABASE_NAME
+            ');
         }
     }
 
