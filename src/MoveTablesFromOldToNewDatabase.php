@@ -27,17 +27,14 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     protected string $databaseNameNewDB;
     protected string $databaseHostNewDB;
 
-    private static $classes_to_move = [
-    ];
+    private static $classes_to_move = [];
 
-    private static $tables_to_move = [
-    ];
+    private static $tables_to_move = [];
 
     /**
      * @var array
      */
-    private static $tables_to_skip = [
-    ];
+    private static $tables_to_skip = [];
 
     /**
      * ```php
@@ -48,7 +45,15 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
      * ```
      * @var array
      */
-    private static $field_to_skip = [
+    private static $field_to_skip = [];
+
+    /**
+     * ```php
+     *        'OldClassName' => 'NewClassName',
+     * ```
+     * @var array
+     */
+    private static $class_names_to_fix = [
 
     ];
 
@@ -68,12 +73,15 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                 $appendi = ['Live', 'Versions'];
                 foreach ($appendi as $appendix) {
                     $versionedTableName = $tableName . '_' . $appendix;
-                    $this->moveTable($versionedTableName);
+                    $newExists = $this->doesTableExist(false, $versionedTableName);
+                    if ($newExists) {
+                        $this->moveTable($versionedTableName);
+                    }
                 }
             }
         }
-        $classes = $this->Config()->get('tables_to_move');
-        foreach ($classes as $class) {
+        $tableNames = $this->Config()->get('tables_to_move');
+        foreach ($tableNames as $tableName) {
             $this->moveTable($tableName);
         }
     }
@@ -105,129 +113,266 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
             ');
         }
     }
+    protected function moveTable(string $tableName): void
+    {
+        DB::alteration_message("Moving $tableName", 'created');
 
+        if ($this->shouldSkipTable($tableName)) {
+            return;
+        }
 
-    protected function moveTable(string $tableName)
+        [$oldExists, $newExists] = $this->checkTableExistence($tableName);
+
+        if ($oldExists && $newExists) {
+            DB::alteration_message("... Truncating $tableName", 'error');
+            $this->truncateTable($tableName);
+
+            $commonFields = $this->findCommonFields($tableName);
+
+            if (empty($commonFields)) {
+                DB::alteration_message("... No matching fields found between the old and new table for: $tableName", 'error');
+                return;
+            }
+
+            $rows = $this->fetchOldTableData($tableName, $commonFields);
+            if (empty($rows)) {
+                DB::alteration_message('... No data found in the old table.', 'notice');
+                return;
+            }
+
+            $fieldTypes = $this->fetchFieldTypes($tableName);
+            $allowedEnumValues = $this->getAllowedEnumValues($tableName);
+
+            $this->insertRowsIntoNewTable($tableName, $commonFields, $rows, $fieldTypes, $allowedEnumValues);
+
+            DB::alteration_message("... Moved rows successfully from $tableName", 'created');
+        } elseif (!$oldExists) {
+            throw new Exception("Table $tableName does not exist in the old database.");
+        } elseif (!$newExists) {
+            throw new Exception("Table $tableName does not exist in the new database.");
+        }
+    }
+
+    protected function shouldSkipTable(string $tableName): bool
+    {
+        $tablesToSkip = $this->Config()->get('tables_to_skip');
+        if (in_array($tableName, $tablesToSkip)) {
+            DB::alteration_message("... Skipping $tableName", 'notice');
+            return true;
+        }
+        return false;
+    }
+
+    protected function checkTableExistence(string $tableName): array
     {
         $oldExists = $this->doesTableExist(true, $tableName);
         $newExists = $this->doesTableExist(false, $tableName);
-        $tablesToSkip = $this->Config()->get('tables_to_skip');
-        if (in_array($tableName, $tablesToSkip)) {
-            return;
+        return [$oldExists, $newExists];
+    }
+
+    protected function findCommonFields(string $tableName): array
+    {
+        $fieldsToSkip = $this->Config()->get('field_to_skip');
+        $oldFields = $this->getTableFields(true, $tableName);
+        $newFields = $this->getTableFields(false, $tableName);
+        $commonFields = array_intersect($oldFields, $newFields);
+
+        if (isset($fieldsToSkip[$tableName])) {
+            $commonFields = array_diff($commonFields, $fieldsToSkip[$tableName]);
         }
-        if ($oldExists && $newExists) {
-            $this->truncateTable($tableName);
-            $fieldsToSkip = $this->Config()->get('field_to_skip');
-            $oldFields = $this->getTableFields(true, $tableName);
-            $newFields = $this->getTableFields(false, $tableName);
-            [$hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB] = $this->getDbConfig(true);
-            [$hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB] = $this->getDbConfig(false);
 
-            // Find common fields between old and new table
-            $commonFields = array_intersect($oldFields, $newFields);
+        return $commonFields;
+    }
 
-            $commonFields = array_intersect($oldFields, $newFields);
-            if (isset($fieldsToSkip[$tableName])) {
-                $commonFields = array_diff($commonFields, $fieldsToSkip[$tableName]);
-            }
+    protected function fetchOldTableData(string $tableName, array $commonFields): array
+    {
+        [$host, $username, $password, $database] = $this->getDbConfig(true);
+        $oldDBConnection = new mysqli($host, $username, $password, $database);
+        if ($oldDBConnection->connect_error) {
+            throw new Exception('Old DB Connection failed: ' . $oldDBConnection->connect_error);
+        }
 
-            if (empty($commonFields)) {
-                throw new Exception('No matching fields found between the old and new table.');
-            }
-
-            // Prepare the field list
-            $fieldList = implode(', ', $commonFields);
-
-            // Connect to the old database
-            $oldDBConnection = new mysqli($hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB);
-            if ($oldDBConnection->connect_error) {
-                throw new Exception('Old DB Connection failed: ' . $oldDBConnection->connect_error);
-            }
-
-            // Fetch data from the old table
-            $query = "SELECT $fieldList FROM $tableName";
-            $result = $oldDBConnection->query($query);
-            if (!$result) {
-                $oldDBConnection->close();
-                throw new Exception('Error fetching data from old table: ' . $oldDBConnection->error);
-            }
-
-            // Prepare data for insertion
-            $rows = $result->fetch_all(MYSQLI_ASSOC);
-            $result->free();
+        $fieldList = '`' . implode('`, `', $commonFields) . '`';
+        $query = "SELECT $fieldList FROM `$tableName`";
+        $result = $oldDBConnection->query($query);
+        if (!$result) {
             $oldDBConnection->close();
+            throw new Exception('Error fetching data from old table: ' . $oldDBConnection->error);
+        }
 
-            if (empty($rows)) {
-                throw new Exception('No data found in the old table.');
-            }
+        $rows = $result->fetch_all(MYSQLI_ASSOC);
+        $result->free();
+        $oldDBConnection->close();
 
-            // Connect to the new database
-            $newDBConnection = new mysqli($hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB);
-            if ($newDBConnection->connect_error) {
-                throw new Exception('New DB Connection failed: ' . $newDBConnection->connect_error);
-            }
+        return $rows;
+    }
 
-            // Determine field types from the old database
-            $fieldTypesQuery = "SHOW COLUMNS FROM $tableName";
-            $fieldTypesResult = $oldDBConnection->query($fieldTypesQuery);
-            if (!$fieldTypesResult) {
-                $oldDBConnection->close();
-                throw new Exception('Error fetching field types: ' . $oldDBConnection->error);
-            }
+    protected function fetchFieldTypes(string $tableName): array
+    {
+        [$host, $username, $password, $database] = $this->getDbConfig(true);
+        $oldDBConnection = new mysqli($host, $username, $password, $database);
 
-            $fieldTypes = [];
-            while ($field = $fieldTypesResult->fetch_assoc()) {
-                $fieldTypes[$field['Field']] = $field['Type'];
-            }
-            $fieldTypesResult->free();
+        $query = "SHOW COLUMNS FROM `$tableName`";
+        $result = $oldDBConnection->query($query);
+        if (!$result) {
+            $oldDBConnection->close();
+            throw new Exception('Error fetching field types: ' . $oldDBConnection->error);
+        }
 
+        $fieldTypes = [];
+        while ($field = $result->fetch_assoc()) {
+            $fieldTypes[$field['Field']] = $field['Type'];
+        }
+        $result->free();
+        $oldDBConnection->close();
 
+        return $fieldTypes;
+    }
 
-            // Insert data into the new table
-            $insertedRowsCount = 0;
-            $newDBConnection->begin_transaction();
-            try {
-                foreach ($rows as $row) {
-                    $placeholders = implode(', ', array_fill(0, count($commonFields), '?'));
-                    $insertQuery = "INSERT INTO $tableName ($fieldList) VALUES ($placeholders)";
-                    $stmt = $newDBConnection->prepare($insertQuery);
-                    if (!$stmt) {
-                        throw new Exception('Error preparing statement: ' . $newDBConnection->error);
-                    }
+    protected function getAllowedEnumValues(string $tableName): array
+    {
+        [$host, $username, $password, $database] = $this->getDbConfig(false);
+        $newDBConnection = new mysqli($host, $username, $password, $database);
 
-                    // Map types and bind values dynamically
-                    $types = '';
-                    $values = [];
-                    foreach ($commonFields as $field) {
-                        $types .= $this->mapFieldTypeToBindType($fieldTypes[$field]);
-                        $values[] = $row[$field];
-                    }
+        $query = "SHOW COLUMNS FROM `$tableName` WHERE Field = 'ClassName'";
+        $result = $newDBConnection->query($query);
+        if (!$result) {
+            $newDBConnection->close();
+            throw new Exception('Error fetching enum values: ' . $newDBConnection->error);
+        }
 
-                    $stmt->bind_param($types, ...$values);
-                    if (!$stmt->execute()) {
-                        throw new Exception('Error executing statement: ' . $stmt->error);
-                    }
+        $enumRow = $result->fetch_assoc();
+        $result->free();
 
-                    $insertedRowsCount++;
-                    $stmt->close();
+        if (isset($enumRow['Type']) && preg_match("/^enum\((.*)\)$/", $enumRow['Type'], $matches)) {
+            return array_map(fn ($value) => trim($value, "'"), explode(',', $matches[1]));
+        }
+
+        return [];
+    }
+    protected function insertRowsIntoNewTable(
+        string $tableName,
+        array $commonFields,
+        array $rows,
+        array $fieldTypes,
+        array $allowedEnumValues
+    ): void {
+        $classesToFix = $this->Config()->get('class_names_to_fix');
+        [$host, $username, $password, $database] = $this->getDbConfig(false);
+        $newDBConnection = new mysqli($host, $username, $password, $database);
+        if ($newDBConnection->connect_error) {
+            throw new Exception('New DB Connection failed: ' . $newDBConnection->connect_error);
+        }
+
+        $fieldList = '`' . implode('`, `', $commonFields) . '`';
+        $newDBConnection->begin_transaction();
+
+        try {
+            foreach ($rows as $row) {
+                $placeholders = implode(', ', array_fill(0, count($commonFields), '?'));
+                $insertQuery = "INSERT INTO `$tableName` ($fieldList) VALUES ($placeholders)";
+                $stmt = $newDBConnection->prepare($insertQuery);
+                if (!$stmt) {
+                    throw new Exception('Error preparing statement: ' . $newDBConnection->error);
                 }
 
-                $newDBConnection->commit();
-            } catch (Exception $e) {
-                $newDBConnection->rollback();
-                $newDBConnection->close();
-                throw $e;
+                $types = '';
+                $values = [];
+                foreach ($commonFields as $field) {
+                    $value = $row[$field];
+
+                    // Validate and fix the value for ClassName
+                    if ($field === 'ClassName') {
+                        $value = $classesToFix[$value] ?? $value;
+                        if (! $value) {
+                            $value = $allowedEnumValues[0] ?? null;
+                        }
+                        $escapedValue = $value;
+                        $escapedValue = $classesToFix[$escapedValue] ?? $escapedValue;
+                        if (!in_array($escapedValue, $allowedEnumValues, true)) {
+                            $escapedValue = addslashes($value);
+                        } else {
+                            $value = stripslashes($value);
+                        }
+                        if (!in_array($escapedValue, $allowedEnumValues, true)) {
+                            error_log("Invalid value for 'ClassName': $escapedValue. Allowed values: " . implode(', ', $allowedEnumValues));
+                            $value = $allowedEnumValues[0] ?? null; // Use the first allowed value as a fallback
+                            if ($value === null) {
+                                throw new Exception("No valid enum value found for 'ClassName'.");
+                            }
+                        }
+                    }
+
+                    $types .= $this->mapFieldTypeToBindType($fieldTypes[$field] ?? '');
+                    $values[] = $value;
+                }
+
+                $stmt->bind_param($types, ...$values);
+                if (!$stmt->execute()) {
+                    throw new Exception('Error executing statement: ' . $stmt->error);
+                }
+                $stmt->close();
             }
 
+            $newDBConnection->commit();
+        } catch (Exception $e) {
+            $newDBConnection->rollback();
+            throw $e;
+        } finally {
             $newDBConnection->close();
-            DB::alteration_message("Moved $insertedRowsCount rows from $tableName", 'created');
-        } elseif (! $oldExists) {
-            throw new Exception("Table $tableName does not exist in the old database.");
-        } elseif (! $newExists) {
-            throw new Exception("Table $tableName does not exist in the new database.");
+        }
+    }
+
+
+
+    public function checkSuccess($tableName)
+    {
+        [$hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB] = $this->getDbConfig(true);
+        [$hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB] = $this->getDbConfig(false);
+
+        // Connect to the new database
+        $newDBConnection = new mysqli($hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB);
+        if ($newDBConnection->connect_error) {
+            throw new Exception('New DB Connection failed: ' . $newDBConnection->connect_error);
         }
 
+        // Fetch row count from the old table
+        $oldRowCountQuery = "SELECT COUNT(*) AS rowCount FROM `$tableName`";
+        $oldDBConnection = new mysqli($hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB);
+        if ($oldDBConnection->connect_error) {
+            throw new Exception('Old DB Connection failed: ' . $oldDBConnection->connect_error);
+        }
+        $oldRowCountResult = $oldDBConnection->query($oldRowCountQuery);
+        if (!$oldRowCountResult) {
+            throw new Exception('Error fetching row count from old table: ' . $oldDBConnection->error);
+        }
+        $oldRowCount = $oldRowCountResult->fetch_assoc()['rowCount'];
+        $oldRowCountResult->free();
+        $oldDBConnection->close();
+
+        // Fetch row count from the new table
+        $newRowCountQuery = "SELECT COUNT(*) AS rowCount FROM `$tableName`";
+        $newRowCountResult = $newDBConnection->query($newRowCountQuery);
+        if (!$newRowCountResult) {
+            throw new Exception('Error fetching row count from new table: ' . $newDBConnection->error);
+        }
+        $newRowCount = $newRowCountResult->fetch_assoc()['rowCount'];
+        $newRowCountResult->free();
+
+        // Compare the row counts
+        if ($oldRowCount !== $newRowCount) {
+            throw new Exception("Row count mismatch for `$tableName`. Old table: $oldRowCount rows, New table: $newRowCount rows.");
+        }
+
+        DB::alteration_message(
+            "Row count verification passed for `$tableName`. Old table: $oldRowCount rows, New table: $newRowCount rows.",
+            'created'
+        );
+        $this->checkSuccess($tableName);
+
     }
+
+
 
     // Helper to map MySQL field types to bind_param types
     public function mapFieldTypeToBindType(string $fieldType): string
@@ -255,7 +400,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         }
 
         // Prepare the query to describe the table
-        $query = 'DESCRIBE ' . $mysqli->real_escape_string($tableName);
+        $query = 'DESCRIBE `' . $mysqli->real_escape_string($tableName).'`';
         $result = $mysqli->query($query);
 
         if (!$result) {
@@ -277,7 +422,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function truncateTable(string $tableName): bool
     {
-        DB::query('TRUNCATE TABLE ' . $tableName);
+        DB::query('TRUNCATE TABLE "' . $tableName.'"');
 
         return true;
     }
@@ -295,9 +440,9 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
         // Prepare the query to check if the table exists
         $query = 'SELECT TABLE_NAME
-                  FROM INFORMATION_SCHEMA.TABLES
-                  WHERE TABLE_SCHEMA = ?
-                    AND TABLE_NAME = ?';
+              FROM INFORMATION_SCHEMA.TABLES
+              WHERE TABLE_SCHEMA = ?
+                AND TABLE_NAME = ?';
 
         $stmt = $mysqli->prepare($query);
 
@@ -307,7 +452,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         }
 
         // Bind parameters
-        $stmt->bind_param('ss', $databaseName, $tableName);
+        $stmt->bind_param('ss', $database, $tableName);
 
         // Execute the query
         $stmt->execute();
@@ -325,19 +470,13 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         return $exists;
     }
 
+
     protected function getDbConfig(bool $isOldDB)
     {
         if ($isOldDB) {
-            $host = $this->databaseHostOldDB;
-            $username = $this->userNameOldDB;
-            $password = $this->passwordOldDB;
-            $database = $this->databaseNameOldDB;
+            return [$this->databaseHostOldDB, $this->userNameOldDB, $this->passwordOldDB, $this->databaseNameOldDB];
         } else {
-            $host = $this->databaseHostNewDB;
-            $username = $this->userNameNewDB;
-            $password = $this->passwordNewDB;
-            $database = $this->databaseNameNewDB;
+            return [$this->databaseHostNewDB, $this->userNameNewDB, $this->passwordNewDB, $this->databaseNameNewDB];
         }
-        return [$host, $username, $password, $database];
     }
 }
