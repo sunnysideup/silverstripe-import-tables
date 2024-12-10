@@ -61,7 +61,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
      */
     public function run($request)
     {
-        $this->getDbConfigs();
+        $this->setDbConfigsFromEnv();
         $classes = $this->Config()->get('classes_to_move');
         foreach ($classes as $class) {
             $obj = Injector::inst()->get($class);
@@ -71,7 +71,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                 $appendi = ['Live', 'Versions'];
                 foreach ($appendi as $appendix) {
                     $versionedTableName = $tableName . '_' . $appendix;
-                    $newExists = $this->doesTableExist(false, $versionedTableName);
+                    $newExists = $this->doesTableExist('new', $versionedTableName);
                     if ($newExists) {
                         $this->moveTable($versionedTableName);
                     }
@@ -84,7 +84,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         }
     }
 
-    protected function getDbConfigs()
+    protected function setDbConfigsFromEnv()
     {
         $this->databaseHostOldDB = Environment::getEnv('SS_DATABASE_SERVER_OLD_DB') ?: 'localhost';
         $this->userNameOldDB = Environment::getEnv('SS_DATABASE_USERNAME_OLD_DB');
@@ -141,9 +141,9 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
             $fieldTypes = $this->fetchFieldTypes($tableName);
             $allowedEnumValues = $this->getAllowedEnumValues($tableName);
 
-            $this->insertRowsIntoNewTable($tableName, $commonFields, $rows, $fieldTypes, $allowedEnumValues);
+            $count = $this->insertRowsIntoNewTable($tableName, $commonFields, $rows, $fieldTypes, $allowedEnumValues);
 
-            DB::alteration_message("... Moved rows successfully from $tableName", 'created');
+            DB::alteration_message("... Moved $count rows successfully from $tableName", 'created');
         } elseif (!$oldExists) {
             throw new Exception("Table $tableName does not exist in the old database.");
         } elseif (!$newExists) {
@@ -163,16 +163,16 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function checkTableExistence(string $tableName): array
     {
-        $oldExists = $this->doesTableExist(true, $tableName);
-        $newExists = $this->doesTableExist(false, $tableName);
+        $oldExists = $this->doesTableExist('old', $tableName);
+        $newExists = $this->doesTableExist('new', $tableName);
         return [$oldExists, $newExists];
     }
 
     protected function findCommonFields(string $tableName): array
     {
         $fieldsToSkip = $this->Config()->get('field_to_skip');
-        $oldFields = $this->getTableFields(true, $tableName);
-        $newFields = $this->getTableFields(false, $tableName);
+        $oldFields = $this->getTableFields('old', $tableName);
+        $newFields = $this->getTableFields('new', $tableName);
         $commonFields = array_intersect($oldFields, $newFields);
 
         if (isset($fieldsToSkip[$tableName])) {
@@ -184,7 +184,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function fetchOldTableData(string $tableName, array $commonFields): array
     {
-        [$host, $username, $password, $database] = $this->getDbConfig(true);
+        [$host, $username, $password, $database] = $this->getDbConfig('old');
         $oldDBConnection = new mysqli($host, $username, $password, $database);
         if ($oldDBConnection->connect_error) {
             throw new Exception('Old DB Connection failed: ' . $oldDBConnection->connect_error);
@@ -207,7 +207,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function fetchFieldTypes(string $tableName): array
     {
-        [$host, $username, $password, $database] = $this->getDbConfig(true);
+        [$host, $username, $password, $database] = $this->getDbConfig('new');
         $oldDBConnection = new mysqli($host, $username, $password, $database);
 
         $query = "SHOW COLUMNS FROM `$tableName`";
@@ -254,7 +254,8 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         array $rows,
         array $fieldTypes,
         array $allowedEnumValues
-    ): void {
+    ): int {
+        $count = 0;
         $classesToFix = $this->Config()->get('class_names_to_fix');
         [$host, $username, $password, $database] = $this->getDbConfig('new');
         $newDBConnection = new mysqli($host, $username, $password, $database);
@@ -309,6 +310,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                 if (!$stmt->execute()) {
                     throw new Exception('Error executing statement: ' . $stmt->error);
                 }
+                $count++;
                 $stmt->close();
             }
 
@@ -319,13 +321,14 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         } finally {
             $newDBConnection->close();
         }
+        return $count;
     }
 
 
 
     public function checkSuccess($tableName)
     {
-        [$hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB] = $this->getDbConfig(true);
+        [$hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB] = $this->getDbConfig('old');
         [$hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB] = $this->getDbConfig('new');
 
         // Connect to the new database
@@ -385,9 +388,9 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         }
     }
 
-    protected function getTableFields(bool $isOldDB, string $tableName): array
+    protected function getTableFields(string $oldOrNew, string $tableName): array
     {
-        [$host, $username, $password, $database] = $this->getDbConfig($isOldDB);
+        [$host, $username, $password, $database] = $this->getDbConfig($oldOrNew);
         // Create a new MySQLi connection
         $mysqli = new mysqli($host, $username, $password, $database);
 
@@ -424,10 +427,10 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         return true;
     }
 
-    public function doesTableExist(bool $isOldDB, string $tableName): bool
+    public function doesTableExist(string $oldOrNew, string $tableName): bool
     {
         // Connect to the database
-        [$host, $username, $password, $database] = $this->getDbConfig($isOldDB);
+        [$host, $username, $password, $database] = $this->getDbConfig($oldOrNew);
         $mysqli = new mysqli($host, $username, $password, $database);
 
         // Check for connection errors
@@ -470,12 +473,13 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function getDbConfig(string $oldOrNew)
     {
-        if ($oldOrNew === 'old') {
-            return [$this->databaseHostOldDB, $this->userNameOldDB, $this->passwordOldDB, $this->databaseNameOldDB];
-        } elseif ($oldOrNew === 'new') {
-            return [$this->databaseHostNewDB, $this->userNameNewDB, $this->passwordNewDB, $this->databaseNameNewDB];
-        } else {
-            throw new Exception('Invalid argument. Use "old" or "new".');
+        switch ($oldOrNew) {
+            case 'old':
+                return [$this->databaseHostOldDB, $this->userNameOldDB, $this->passwordOldDB, $this->databaseNameOldDB];
+            case 'new':
+                return [$this->databaseHostNewDB, $this->userNameNewDB, $this->passwordNewDB, $this->databaseNameNewDB];
+            default:
+                throw new Exception('Invalid argument. Use "old" or "new".');
         }
     }
 }
