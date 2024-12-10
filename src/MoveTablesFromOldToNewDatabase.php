@@ -53,9 +53,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
      * ```
      * @var array
      */
-    private static $class_names_to_fix = [
-
-    ];
+    private static $class_names_to_fix = [];
 
     private static $segment = 'move-tables-from-old-to-new-database';
 
@@ -231,7 +229,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function getAllowedEnumValues(string $tableName): array
     {
-        [$host, $username, $password, $database] = $this->getDbConfig(false);
+        [$host, $username, $password, $database] = $this->getDbConfig('new');
         $newDBConnection = new mysqli($host, $username, $password, $database);
 
         $query = "SHOW COLUMNS FROM `$tableName` WHERE Field = 'ClassName'";
@@ -245,7 +243,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         $result->free();
 
         if (isset($enumRow['Type']) && preg_match("/^enum\((.*)\)$/", $enumRow['Type'], $matches)) {
-            return array_map(fn ($value) => trim($value, "'"), explode(',', $matches[1]));
+            return array_map(fn($value) => trim($value, "'"), explode(',', $matches[1]));
         }
 
         return [];
@@ -258,7 +256,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         array $allowedEnumValues
     ): void {
         $classesToFix = $this->Config()->get('class_names_to_fix');
-        [$host, $username, $password, $database] = $this->getDbConfig(false);
+        [$host, $username, $password, $database] = $this->getDbConfig('new');
         $newDBConnection = new mysqli($host, $username, $password, $database);
         if ($newDBConnection->connect_error) {
             throw new Exception('New DB Connection failed: ' . $newDBConnection->connect_error);
@@ -328,7 +326,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     public function checkSuccess($tableName)
     {
         [$hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB] = $this->getDbConfig(true);
-        [$hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB] = $this->getDbConfig(false);
+        [$hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB] = $this->getDbConfig('new');
 
         // Connect to the new database
         $newDBConnection = new mysqli($hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB);
@@ -369,7 +367,6 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
             'created'
         );
         $this->checkSuccess($tableName);
-
     }
 
 
@@ -400,7 +397,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         }
 
         // Prepare the query to describe the table
-        $query = 'DESCRIBE `' . $mysqli->real_escape_string($tableName).'`';
+        $query = 'DESCRIBE `' . $mysqli->real_escape_string($tableName) . '`';
         $result = $mysqli->query($query);
 
         if (!$result) {
@@ -422,7 +419,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function truncateTable(string $tableName): bool
     {
-        DB::query('TRUNCATE TABLE "' . $tableName.'"');
+        DB::query('TRUNCATE TABLE "' . $tableName . '"');
 
         return true;
     }
@@ -471,12 +468,14 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     }
 
 
-    protected function getDbConfig(bool $isOldDB)
+    protected function getDbConfig(string $oldOrNew)
     {
-        if ($isOldDB) {
+        if ($oldOrNew === 'old') {
             return [$this->databaseHostOldDB, $this->userNameOldDB, $this->passwordOldDB, $this->databaseNameOldDB];
-        } else {
+        } elseif ($oldOrNew === 'new') {
             return [$this->databaseHostNewDB, $this->userNameNewDB, $this->passwordNewDB, $this->databaseNameNewDB];
+        } else {
+            throw new Exception('Invalid argument. Use "old" or "new".');
         }
     }
 }
