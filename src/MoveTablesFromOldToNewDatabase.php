@@ -71,8 +71,10 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                 $appendi = ['Live', 'Versions'];
                 foreach ($appendi as $appendix) {
                     $versionedTableName = $tableName . '_' . $appendix;
+                    // here we just check if they exist.
                     $newExists = $this->doesTableExist('new', $versionedTableName);
-                    if ($newExists) {
+                    $oldExists = $this->doesTableExist('old', $versionedTableName);
+                    if ($newExists && $oldExists) {
                         $this->moveTable($versionedTableName);
                     }
                 }
