@@ -4,9 +4,11 @@ namespace Sunnysideup\ImportTables;
 
 use Exception;
 use mysqli;
+use SilverStripe\Core\Config\Config;
 use SilverStripe\Core\Environment;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\Dev\BuildTask;
+use SilverStripe\ORM\Connect\MySQLDatabase;
 use SilverStripe\ORM\DB;
 use SilverStripe\Versioned\Versioned;
 
@@ -56,6 +58,8 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     private static $class_names_to_fix = [];
 
     private static $segment = 'move-tables-from-old-to-new-database';
+
+    private static $character_replacement = [];
 
     /**
      */
@@ -188,6 +192,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     {
         [$host, $username, $password, $database] = $this->getDbConfig('old');
         $oldDBConnection = new mysqli($host, $username, $password, $database);
+        $oldDBConnection->set_charset(Config::inst()->get(MySQLDatabase::class, 'connection_charset'));
         if ($oldDBConnection->connect_error) {
             throw new Exception('Old DB Connection failed: ' . $oldDBConnection->connect_error);
         }
@@ -259,8 +264,10 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     ): int {
         $count = 0;
         $classesToFix = $this->Config()->get('class_names_to_fix');
+        $charReplacements = $this->Config()->get('character_replacement');
         [$host, $username, $password, $database] = $this->getDbConfig('new');
         $newDBConnection = new mysqli($host, $username, $password, $database);
+        $newDBConnection->set_charset(Config::inst()->get(MySQLDatabase::class, 'connection_charset'));
         if ($newDBConnection->connect_error) {
             throw new Exception('New DB Connection failed: ' . $newDBConnection->connect_error);
         }
@@ -305,6 +312,9 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                     }
 
                     $types .= $this->mapFieldTypeToBindType($fieldTypes[$field] ?? '');
+                    foreach ($charReplacements as $charSearch => $charReplace) {
+                        $value = str_replace($charSearch, $charReplace, $value);
+                    }
                     $values[] = $value;
                 }
 
