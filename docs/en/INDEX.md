@@ -21,6 +21,7 @@ Sunnysideup\ImportTables\MoveTablesFromOldToNewDatabase:
   tables_to_move:
     - MyTableOne
     - MyTableTwo
+    - MyOtherTable
   tables_to_skip:
     - MyTableThree
     - MyTableFour
@@ -28,6 +29,12 @@ Sunnysideup\ImportTables\MoveTablesFromOldToNewDatabase:
     MyTableOne:
       - FieldOne
       - FieldTwo
+  update_rather_than_replace: true
+  always_update:
+    - MyTableTwo
+  always_replace:
+    - MyOtherTable
+
 ```
 
 then run the following task from the command line:

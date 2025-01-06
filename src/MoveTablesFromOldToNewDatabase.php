@@ -61,6 +61,12 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     private static $character_replacement = [];
 
+    private static $update_rather_than_replace = false;
+
+    private static $always_update = [];
+
+    private static $always_replace = [];
+
     /**
      */
     public function run($request)
@@ -69,19 +75,9 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         $classes = $this->Config()->get('classes_to_move');
         foreach ($classes as $class) {
             $obj = Injector::inst()->get($class);
-            $tableName = $class::config()->get('table_name');
-            $this->moveTable($tableName);
-            if ($obj->hasExtension(Versioned::class)) {
-                $appendi = ['Live', 'Versions'];
-                foreach ($appendi as $appendix) {
-                    $versionedTableName = $tableName . '_' . $appendix;
-                    // here we just check if they exist.
-                    $newExists = $this->doesTableExist('new', $versionedTableName);
-                    $oldExists = $this->doesTableExist('old', $versionedTableName);
-                    if ($newExists && $oldExists) {
-                        $this->moveTable($versionedTableName);
-                    }
-                }
+            $tables = $this->getTablesForClassName($class);
+            foreach ($tables as $tableName) {
+                $this->moveTable($tableName);
             }
         }
         $tableNames = $this->Config()->get('tables_to_move');
@@ -128,7 +124,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         [$oldExists, $newExists] = $this->checkTableExistence($tableName);
 
         if ($oldExists && $newExists) {
-            DB::alteration_message("... Truncating $tableName", 'error');
+
             $this->truncateTable($tableName);
 
             $commonFields = $this->findCommonFields($tableName);
@@ -255,12 +251,13 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
         return [];
     }
-    protected function insertRowsIntoNewTable(
+
+    protected function insertOrUpdateRowsIntoNewTable(
         string $tableName,
         array $commonFields,
         array $rows,
         array $fieldTypes,
-        array $allowedEnumValues
+        array $allowedEnumValues,
     ): int {
         $count = 0;
         $classesToFix = $this->Config()->get('class_names_to_fix');
@@ -275,17 +272,16 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         $fieldList = '`' . implode('`, `', $commonFields) . '`';
         $newDBConnection->begin_transaction();
 
+        $update = $this->updateRatherThanReplace($tableName);
         try {
             foreach ($rows as $row) {
                 $placeholders = implode(', ', array_fill(0, count($commonFields), '?'));
-                $insertQuery = "INSERT INTO `$tableName` ($fieldList) VALUES ($placeholders)";
-                $stmt = $newDBConnection->prepare($insertQuery);
-                if (!$stmt) {
-                    throw new Exception('Error preparing statement: ' . $newDBConnection->error);
-                }
-
                 $types = '';
                 $values = [];
+                $idField = 'ID'; // Adjust this if your ID field is named differently
+                $updateQuery = '';
+
+                // Prepare values and types
                 foreach ($commonFields as $field) {
                     $value = $row[$field];
 
@@ -304,7 +300,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                         }
                         if (!in_array($escapedValue, $allowedEnumValues, true)) {
                             error_log("Invalid value for 'ClassName': $escapedValue. Allowed values: " . implode(', ', $allowedEnumValues));
-                            $value = $allowedEnumValues[0] ?? null; // Use the first allowed value as a fallback
+                            $value = $allowedEnumValues[0] ?? null;
                             if ($value === null) {
                                 throw new Exception("No valid enum value found for 'ClassName'.");
                             }
@@ -318,10 +314,51 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                     $values[] = $value;
                 }
 
+                if ($update && isset($row[$idField])) {
+                    // Check if row with ID exists
+                    $checkQuery = "SELECT COUNT(*) FROM `$tableName` WHERE `$idField` = ?";
+                    $checkStmt = $newDBConnection->prepare($checkQuery);
+                    if (!$checkStmt) {
+                        throw new Exception('Error preparing statement: ' . $newDBConnection->error);
+                    }
+                    $checkStmt->bind_param('i', $row[$idField]);
+                    $checkStmt->execute();
+                    $checkStmt->bind_result($exists);
+                    $checkStmt->fetch();
+                    $checkStmt->close();
+
+                    if ($exists) {
+                        // Update the existing row
+                        $updateFields = [];
+                        foreach ($commonFields as $field) {
+                            if ($field !== $idField) {
+                                $updateFields[] = "`$field` = ?";
+                            }
+                        }
+                        $updateQuery = "UPDATE `$tableName` SET " . implode(', ', $updateFields) . " WHERE `$idField` = ?";
+                        $values[] = $row[$idField]; // Add ID to the end for WHERE clause
+                        $types .= 'i'; // Assuming ID is an integer
+                    }
+                }
+
+                if (!$update || !$updateQuery) {
+                    // Insert if not updating or no update query is set
+                    $insertQuery = "INSERT INTO `$tableName` ($fieldList) VALUES ($placeholders)";
+                    $stmt = $newDBConnection->prepare($insertQuery);
+                } else {
+                    // Use the update query
+                    $stmt = $newDBConnection->prepare($updateQuery);
+                }
+
+                if (!$stmt) {
+                    throw new Exception('Error preparing statement: ' . $newDBConnection->error);
+                }
+
                 $stmt->bind_param($types, ...$values);
                 if (!$stmt->execute()) {
                     throw new Exception('Error executing statement: ' . $stmt->error);
                 }
+
                 $count++;
                 $stmt->close();
             }
@@ -335,6 +372,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         }
         return $count;
     }
+
 
 
 
@@ -434,6 +472,11 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function truncateTable(string $tableName): bool
     {
+        if ($this->updateRatherThanReplace($tableName)) {
+            DB::alteration_message("... Updating $tableName", 'error');
+            return true;
+        }
+        DB::alteration_message("... Truncating $tableName", 'error');
         DB::query('TRUNCATE TABLE "' . $tableName . '"');
 
         return true;
@@ -493,5 +536,46 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
             default:
                 throw new Exception('Invalid argument. Use "old" or "new".');
         }
+    }
+
+    protected function updateRatherThanReplace(string $tableName): bool
+    {
+        if ($this->Config()->get('update_rather_than_replace')) {
+            if (!empty($this->Config()->get('always_replace')) && in_array($tableName, $this->Config()->get('always_replace'))) {
+                return false;
+            }
+            return true;
+        }
+        if (in_array($tableName, $this->Config()->get('always_update'))) {
+            return true;
+        }
+        return false;
+    }
+
+    protected function getTablesForClassName(string $className): array
+    {
+        $tables = [];
+        $tables[] = $className::config()->get('table_name');
+        $tables = array_merge($tables, $this->addVersionedTables($className));
+        $parentClasses = class_parents($className);
+        foreach ($parentClasses as $parentClass) {
+            $tables[] = $parentClass::config()->get('table_name');
+            $tables = array_merge($tables, $this->addVersionedTables($parentClass));
+        }
+        return array_unique(array_filter($tables));
+    }
+
+    protected function addVersionedTables(string $className): array
+    {
+        $tables = [];
+
+        if ($className::has_extension(Versioned::class)) {
+            $tableName = $className::config()->get('table_name');
+            $appendi = ['Live', 'Versions'];
+            foreach ($appendi as $appendix) {
+                $tables[] =  $tableName . '_' . $appendix;
+            }
+        }
+        return $tables;
     }
 }
