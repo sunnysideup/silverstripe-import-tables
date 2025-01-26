@@ -143,7 +143,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
             $fieldTypes = $this->fetchFieldTypes($tableName);
             $allowedEnumValues = $this->getAllowedEnumValues($tableName);
 
-            $count = $this->insertRowsIntoNewTable($tableName, $commonFields, $rows, $fieldTypes, $allowedEnumValues);
+            $count = $this->insertOrUpdateRowsIntoNewTable($tableName, $commonFields, $rows, $fieldTypes, $allowedEnumValues);
 
             DB::alteration_message("... Moved $count rows successfully from $tableName", 'created');
         } elseif (!$oldExists) {
