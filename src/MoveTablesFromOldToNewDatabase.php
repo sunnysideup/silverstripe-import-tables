@@ -72,7 +72,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     public function run($request)
     {
         $this->setDbConfigsFromEnv();
-        $classes = $this->Config()->get('classes_to_move');
+        $classes = (array) $this->Config()->get('classes_to_move');
         foreach ($classes as $class) {
             $obj = Injector::inst()->get($class);
             $tables = $this->getTablesForClassName($class);
@@ -80,7 +80,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                 $this->moveTable($tableName);
             }
         }
-        $tableNames = $this->Config()->get('tables_to_move');
+        $tableNames = (array) $this->Config()->get('tables_to_move');
         foreach ($tableNames as $tableName) {
             $this->moveTable($tableName);
         }
