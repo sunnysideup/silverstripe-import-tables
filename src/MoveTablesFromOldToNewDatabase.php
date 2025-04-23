@@ -75,7 +75,6 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         $this->setDbConfigsFromEnv();
         $classes = (array) $this->Config()->get('classes_to_move');
         foreach ($classes as $class) {
-            $obj = Injector::inst()->get($class);
             $tables = $this->getTablesForClassName($class);
             foreach ($tables as $tableName) {
                 $this->moveTable($tableName);
