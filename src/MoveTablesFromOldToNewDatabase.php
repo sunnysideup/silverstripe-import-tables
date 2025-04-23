@@ -147,7 +147,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
             DB::alteration_message("... Moved $count rows successfully from $tableName", 'created');
         } elseif (!$oldExists) {
-            throw new Exception("Table $tableName does not exist in the old database.");
+            echo "Table $tableName does not exist in the old database." . PHP_EOL;
         } elseif (!$newExists) {
             throw new Exception("Table $tableName does not exist in the new database.");
         }
@@ -251,75 +251,64 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
         return [];
     }
-
     protected function insertOrUpdateRowsIntoNewTable(
         string $tableName,
         array $commonFields,
         array $rows,
         array $fieldTypes,
-        array $allowedEnumValues,
+        array $allowedEnumValues
     ): int {
         $count = 0;
         $classesToFix = $this->Config()->get('class_names_to_fix');
         $charReplacements = $this->Config()->get('character_replacement');
         [$host, $username, $password, $database] = $this->getDbConfig('new');
-        $newDBConnection = new mysqli($host, $username, $password, $database);
-        $newDBConnection->set_charset(Config::inst()->get(MySQLDatabase::class, 'connection_charset'));
-        if ($newDBConnection->connect_error) {
-            throw new Exception('New DB Connection failed: ' . $newDBConnection->connect_error);
+
+        $db = new mysqli($host, $username, $password, $database);
+        $db->set_charset(
+            Config::inst()->get(MySQLDatabase::class, 'connection_charset')
+        );
+        if ($db->connect_error) {
+            throw new Exception('New DB connection failed: ' . $db->connect_error);
         }
 
+        $idField = 'ID';
         $fieldList = '`' . implode('`, `', $commonFields) . '`';
-        $newDBConnection->begin_transaction();
+        $db->begin_transaction();
+        $shouldUpdate = $this->updateRatherThanReplace($tableName);
 
-        $update = $this->updateRatherThanReplace($tableName);
         try {
             foreach ($rows as $row) {
-                $placeholders = implode(', ', array_fill(0, count($commonFields), '?'));
-                $types = '';
+                // --- Prepare base values and types ---
                 $values = [];
-                $idField = 'ID'; // Adjust this if your ID field is named differently
-                $updateQuery = '';
+                $types  = '';
 
-                // Prepare values and types
                 foreach ($commonFields as $field) {
-                    $value = $row[$field];
+                    $value = $row[$field] ?? null;
 
-                    // Validate and fix the value for ClassName
                     if ($field === 'ClassName') {
                         $value = $classesToFix[$value] ?? $value;
-                        if (! $value) {
-                            $value = $allowedEnumValues[0] ?? null;
-                        }
-                        $escapedValue = $value;
-                        $escapedValue = $classesToFix[$escapedValue] ?? $escapedValue;
-                        if (!in_array($escapedValue, $allowedEnumValues, true)) {
-                            $escapedValue = addslashes($value);
-                        } else {
-                            $value = stripslashes($value);
-                        }
-                        if (!in_array($escapedValue, $allowedEnumValues, true)) {
-                            error_log("Invalid value for 'ClassName': $escapedValue. Allowed values: " . implode(', ', $allowedEnumValues));
-                            $value = $allowedEnumValues[0] ?? null;
-                            if ($value === null) {
-                                throw new Exception("No valid enum value found for 'ClassName'.");
-                            }
+                        if (!in_array($value, $allowedEnumValues, true)) {
+                            $value = $allowedEnumValues[0] ?? '';
                         }
                     }
 
-                    $types .= $this->mapFieldTypeToBindType($fieldTypes[$field] ?? '');
-                    foreach ($charReplacements as $charSearch => $charReplace) {
-                        $value = str_replace($charSearch, $charReplace, $value);
+                    foreach ($charReplacements as $search => $replace) {
+                        $value = str_replace($search, $replace, (string) $value);
                     }
+
+                    $types   .= $this->mapFieldTypeToBindType(
+                        $fieldTypes[$field] ?? ''
+                    );
                     $values[] = $value;
                 }
 
-                if ($update && isset($row[$idField])) {
-                    // Check if row with ID exists
-                    $checkQuery = "SELECT COUNT(*) FROM `$tableName` WHERE `$idField` = ?";
-                    $checkStmt = $newDBConnection->prepare($checkQuery);
-                    if (!$checkStmt) {
-                        throw new Exception('Error preparing statement: ' . $newDBConnection->error);
+                // --- Determine if we need to UPDATE ---
+                $isUpdate = false;
+                if ($shouldUpdate && isset($row[$idField])) {
+                    $checkSql  = "SELECT COUNT(*) FROM `$tableName` WHERE `$idField` = ?";
+                    $checkStmt = $db->prepare($checkSql);
+                    if (! $checkStmt) {
+                        throw new Exception('Error preparing check: ' . $db->error);
                     }
                     $checkStmt->bind_param('i', $row[$idField]);
                     $checkStmt->execute();
@@ -327,49 +316,82 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                     $checkStmt->fetch();
                     $checkStmt->close();
 
-                    if ($exists) {
-                        // Update the existing row
-                        $updateFields = [];
-                        foreach ($commonFields as $field) {
-                            if ($field !== $idField) {
-                                $updateFields[] = "`$field` = ?";
-                            }
-                        }
-                        $updateQuery = "UPDATE `$tableName` SET " . implode(', ', $updateFields) . " WHERE `$idField` = ?";
-                        $values[] = $row[$idField]; // Add ID to the end for WHERE clause
-                        $types .= 'i'; // Assuming ID is an integer
+                    $isUpdate = (bool) $exists;
+                }
+
+                if ($isUpdate) {
+                    // --- Build UPDATE statement ---
+                    $setFields = array_filter(
+                        $commonFields,
+                        fn($f) => $f !== $idField
+                    );
+                    $setSql = implode(
+                        ', ',
+                        array_map(fn($f) => "`$f` = ?", $setFields)
+                    );
+                    $sql = "UPDATE `$tableName` SET $setSql WHERE `$idField` = ?";
+
+                    // Rebuild types/values: non-ID fields, then ID
+                    $updateValues = [];
+                    $updateTypes  = '';
+                    foreach ($setFields as $field) {
+                        $updateTypes   .= $this->mapFieldTypeToBindType(
+                            $fieldTypes[$field] ?? ''
+                        );
+                        $updateValues[] = $row[$field] ?? null;
                     }
-                }
+                    $updateTypes   .= 'i';
+                    $updateValues[] = $row[$idField];
 
-                if (!$update || !$updateQuery) {
-                    // Insert if not updating or no update query is set
-                    $insertQuery = "INSERT INTO `$tableName` ($fieldList) VALUES ($placeholders)";
-                    $stmt = $newDBConnection->prepare($insertQuery);
+                    $stmt = $db->prepare($sql);
+                    if (! $stmt) {
+                        throw new Exception('Error preparing update: ' . $db->error);
+                    }
+
+                    // Bind by reference
+                    $refs = [];
+                    foreach ($updateValues as $i => &$val) {
+                        $refs[$i] = &$val;
+                    }
+                    array_unshift($refs, $updateTypes);
+                    call_user_func_array([$stmt, 'bind_param'], $refs);
                 } else {
-                    // Use the update query
-                    $stmt = $newDBConnection->prepare($updateQuery);
+                    // --- Build INSERT statement ---
+                    $placeholders = implode(
+                        ', ',
+                        array_fill(0, count($commonFields), '?')
+                    );
+                    $sql = "INSERT INTO `$tableName` ($fieldList) VALUES ($placeholders)";
+
+                    $stmt = $db->prepare($sql);
+                    if (! $stmt) {
+                        throw new Exception('Error preparing insert: ' . $db->error);
+                    }
+
+                    // Bind by reference
+                    $refs = [];
+                    foreach ($values as $i => &$val) {
+                        $refs[$i] = &$val;
+                    }
+                    array_unshift($refs, $types);
+                    call_user_func_array([$stmt, 'bind_param'], $refs);
                 }
 
-                if (!$stmt) {
-                    throw new Exception('Error preparing statement: ' . $newDBConnection->error);
-                }
-
-                $stmt->bind_param($types, ...$values);
-                if (!$stmt->execute()) {
+                if (! $stmt->execute()) {
                     throw new Exception('Error executing statement: ' . $stmt->error);
                 }
-
-                $count++;
                 $stmt->close();
+                $count++;
             }
 
-            $newDBConnection->commit();
+            $db->commit();
         } catch (Exception $e) {
-            $newDBConnection->rollback();
+            $db->rollback();
+            $db->close();
             throw $e;
-        } finally {
-            $newDBConnection->close();
         }
+
+        $db->close();
         return $count;
     }
 
