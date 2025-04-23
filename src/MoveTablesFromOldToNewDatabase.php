@@ -18,6 +18,8 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected $description = 'Move tables from old database to new database';
 
+    private static $segment = 'move-tables-from-old-to-new-database';
+
     protected $enabled = true;
 
     protected string $userNameOldDB;
@@ -29,14 +31,14 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
     protected string $databaseNameNewDB;
     protected string $databaseHostNewDB;
 
-    private static $classes_to_move = [];
+    private static array $classes_to_move = [];
 
-    private static $tables_to_move = [];
+    private static array $tables_to_move = [];
 
     /**
      * @var array
      */
-    private static $tables_to_skip = [];
+    private static array $tables_to_skip = [];
 
     /**
      * ```php
@@ -47,7 +49,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
      * ```
      * @var array
      */
-    private static $field_to_skip = [];
+    private static array $field_to_skip = [];
 
     /**
      * ```php
@@ -55,17 +57,16 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
      * ```
      * @var array
      */
-    private static $class_names_to_fix = [];
+    private static array $class_names_to_fix = [];
 
-    private static $segment = 'move-tables-from-old-to-new-database';
 
-    private static $character_replacement = [];
+    private static array $character_replacement = [];
 
-    private static $update_rather_than_replace = false;
+    private static bool $update_rather_than_replace = false;
 
-    private static $always_update = [];
+    private static array $always_update = [];
 
-    private static $always_replace = [];
+    private static array $always_replace = [];
 
     /**
      */
