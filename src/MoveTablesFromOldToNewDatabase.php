@@ -258,11 +258,15 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         array $fieldTypes,
         array $allowedEnumValues
     ): int {
+        // Counter for successfully processed rows
         $count = 0;
+        // Load mappings for fixing ClassName values and character replacements
         $classesToFix = $this->Config()->get('class_names_to_fix');
         $charReplacements = $this->Config()->get('character_replacement');
+        // Get new database connection details
         [$host, $username, $password, $database] = $this->getDbConfig('new');
 
+        // Establish MySQL connection
         $db = new mysqli($host, $username, $password, $database);
         $db->set_charset(
             Config::inst()->get(MySQLDatabase::class, 'connection_charset')
@@ -272,19 +276,24 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
         }
 
         $idField = 'ID';
+        // Prepare comma-separated field list for INSERT
         $fieldList = '`' . implode('`, `', $commonFields) . '`';
+        // Start a transaction for batch safety
         $db->begin_transaction();
+        // Determine if we should update existing rows or always insert
         $shouldUpdate = $this->updateRatherThanReplace($tableName);
 
         try {
             foreach ($rows as $row) {
-                // --- Prepare base values and types ---
+                // --- Prepare base values and types for binding ---
                 $values = [];
                 $types  = '';
 
                 foreach ($commonFields as $field) {
+                    // Fetch the raw value or null
                     $value = $row[$field] ?? null;
 
+                    // For ClassName, enforce valid enum
                     if ($field === 'ClassName') {
                         $value = $classesToFix[$value] ?? $value;
                         if (!in_array($value, $allowedEnumValues, true)) {
@@ -292,17 +301,19 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                         }
                     }
 
+                    // Apply any character replacements
                     foreach ($charReplacements as $search => $replace) {
                         $value = str_replace($search, $replace, (string) $value);
                     }
 
+                    // Map the field type to mysqli bind type and collect value
                     $types   .= $this->mapFieldTypeToBindType(
                         $fieldTypes[$field] ?? ''
                     );
                     $values[] = $value;
                 }
 
-                // --- Determine if we need to UPDATE ---
+                // --- Determine if this row already exists for UPDATE ---
                 $isUpdate = false;
                 if ($shouldUpdate && isset($row[$idField])) {
                     $checkSql  = "SELECT COUNT(*) FROM `$tableName` WHERE `$idField` = ?";
@@ -320,7 +331,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                 }
 
                 if ($isUpdate) {
-                    // --- Build UPDATE statement ---
+                    // --- Build and execute UPDATE statement ---
                     $setFields = array_filter(
                         $commonFields,
                         fn($f) => $f !== $idField
@@ -331,7 +342,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                     );
                     $sql = "UPDATE `$tableName` SET $setSql WHERE `$idField` = ?";
 
-                    // Rebuild types/values: non-ID fields, then ID
+                    // Rebuild types/values: first non-ID fields, then ID for WHERE clause
                     $updateValues = [];
                     $updateTypes  = '';
                     foreach ($setFields as $field) {
@@ -348,7 +359,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                         throw new Exception('Error preparing update: ' . $db->error);
                     }
 
-                    // Bind by reference
+                    // Bind parameters by reference
                     $refs = [];
                     foreach ($updateValues as $i => &$val) {
                         $refs[$i] = &$val;
@@ -356,7 +367,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                     array_unshift($refs, $updateTypes);
                     call_user_func_array([$stmt, 'bind_param'], $refs);
                 } else {
-                    // --- Build INSERT statement ---
+                    // --- Build and execute INSERT statement ---
                     $placeholders = implode(
                         ', ',
                         array_fill(0, count($commonFields), '?')
@@ -368,7 +379,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                         throw new Exception('Error preparing insert: ' . $db->error);
                     }
 
-                    // Bind by reference
+                    // Bind parameters by reference
                     $refs = [];
                     foreach ($values as $i => &$val) {
                         $refs[$i] = &$val;
@@ -377,6 +388,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                     call_user_func_array([$stmt, 'bind_param'], $refs);
                 }
 
+                // Execute the prepared statement
                 if (! $stmt->execute()) {
                     throw new Exception('Error executing statement: ' . $stmt->error);
                 }
@@ -384,21 +396,23 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
                 $count++;
             }
 
+            // Commit all changes if every row succeeded
             $db->commit();
         } catch (Exception $e) {
+            // Rollback on any error
             $db->rollback();
             $db->close();
             throw $e;
         }
 
+        // Close connection and return processed count
         $db->close();
         return $count;
     }
 
 
 
-
-    public function checkSuccess($tableName)
+    public function checkSuccess(string $tableName)
     {
         [$hostOldDB, $usernameOldDB, $passwordOldDB, $databaseOldDB] = $this->getDbConfig('old');
         [$hostNewDB, $usernameNewDB, $passwordNewDB, $databaseNewDB] = $this->getDbConfig('new');
