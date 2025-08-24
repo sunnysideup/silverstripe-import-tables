@@ -49,7 +49,7 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
      * ```
      * @var array
      */
-    private static array $field_to_skip = [];
+    private static array $fields_to_skip = [];
 
     /**
      * ```php
@@ -60,14 +60,13 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
      * ```
      * @var array
      */
-    private static array $field_to_include = [];
+    private static array $fields_to_include = [];
 
     /**
      * ```php
-     *         'MyTable' => [
-     *            'Field1',
-     *            'Field2',
-     *        ],
+     *        '1',
+     *        '2',
+     *        '3',
      * ```
      * @var array
      */
@@ -75,10 +74,9 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     /**
      * ```php
-     *         'MyTable' => [
-     *            'Field1',
-     *            'Field2',
-     *        ],
+     *        '1',
+     *        '2',
+     *        '3',
      * ```
      * @var array
      */
@@ -205,11 +203,18 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function findCommonFields(string $tableName): array
     {
-        $fieldsToSkip = $this->Config()->get('field_to_skip');
+        $fieldsToSkip = $this->Config()->get('fields_to_skip');
+        $fieldsToInclude = $this->Config()->get('fields_to_include');
         $oldFields = $this->getTableFields('old', $tableName);
         $newFields = $this->getTableFields('new', $tableName);
         $commonFields = array_intersect($oldFields, $newFields);
-
+        if (isset($fieldsToInclude[$tableName]) && is_array($fieldsToInclude[$tableName]) && count($fieldsToInclude[$tableName])) {
+            $diff = array_diff($fieldsToInclude[$tableName], $commonFields);
+            if (!empty($diff)) {
+                user_error("... Mismatch for fields to include for $tableName: " . implode(', ', $diff), E_USER_ERROR);
+            }
+            $commonFields = array_intersect($commonFields, $fieldsToInclude[$tableName]);
+        }
         if (isset($fieldsToSkip[$tableName])) {
             $commonFields = array_diff($commonFields, $fieldsToSkip[$tableName]);
         }
