@@ -53,6 +53,39 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     /**
      * ```php
+     *         'MyTable' => [
+     *            'Field1',
+     *            'Field2',
+     *        ],
+     * ```
+     * @var array
+     */
+    private static array $field_to_include = [];
+
+    /**
+     * ```php
+     *         'MyTable' => [
+     *            'Field1',
+     *            'Field2',
+     *        ],
+     * ```
+     * @var array
+     */
+    private static array $old_ids_to_include = [];
+
+    /**
+     * ```php
+     *         'MyTable' => [
+     *            'Field1',
+     *            'Field2',
+     *        ],
+     * ```
+     * @var array
+     */
+    private static array $old_ids_to_exclude = [];
+
+    /**
+     * ```php
      *        'OldClassName' => 'NewClassName',
      * ```
      * @var array
@@ -576,13 +609,16 @@ class MoveTablesFromOldToNewDatabase extends BuildTask
 
     protected function updateRatherThanReplace(string $tableName): bool
     {
-        if ($this->Config()->get('update_rather_than_replace')) {
-            if (!empty($this->Config()->get('always_replace')) && in_array($tableName, $this->Config()->get('always_replace'))) {
+        $generallyUpdate = $this->Config()->get('update_rather_than_replace');
+        $alwaysUpdate = $this->Config()->get('always_update');
+        $alwaysReplace = $this->Config()->get('always_replace');
+        if ($generallyUpdate) {
+            if (!empty($alwaysReplace) && in_array($tableName, $alwaysReplace)) {
                 return false;
             }
             return true;
         }
-        if (in_array($tableName, $this->Config()->get('always_update'))) {
+        if (in_array($tableName, $alwaysUpdate)) {
             return true;
         }
         return false;
