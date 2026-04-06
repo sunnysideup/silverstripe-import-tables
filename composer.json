@@ -1,38 +1,38 @@
 {
-    "name": "sunnysideup/import-tables",
-    "description": "A FooBar for Silverstripe CMS modules.",
-    "type": "silverstripe-vendormodule",
-    "keywords": [
-        "import",
-        "tranfer",
-        "old website",
-        "move website",
-        "new website",
-        "migrate"
-    ],
-    "license": "BSD-3-Clause",
-    "require": {
-        "silverstripe/framework": "^5.0",
-        "silverstripe/admin": "^2.0"
-    },
-    "require-dev": {},
-    "autoload": {
-        "psr-4": {
-            "Sunnysideup\\ImportTables\\": "src/"
-        }
-    },
-    "extra": {
-        "expose": [
-            "client/dist"
-        ]
-    },
-    "minimum-stability": "dev",
-    "prefer-stable": true,
-    "authors": [
-        {
-            "name": "Nicolaas Thiemen Francken",
-            "email": "modules@sunnysideup.co.nz",
-            "role": "lead developer"
-        }
+  "name": "sunnysideup/import-tables",
+  "description": "A FooBar for Silverstripe CMS modules.",
+  "type": "silverstripe-vendormodule",
+  "keywords": [
+    "import",
+    "tranfer",
+    "old website",
+    "move website",
+    "new website",
+    "migrate"
+  ],
+  "license": "BSD-3-Clause",
+  "require": {
+    "silverstripe/framework": "^5.0",
+    "silverstripe/admin": "^2.0"
+  },
+  "require-dev": {},
+  "autoload": {
+    "psr-4": {
+      "Sunnysideup\\ImportTables\\": "src/"
+    }
+  },
+  "extra": {
+    "expose": [
+      "client/dist"
     ]
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true,
+  "authors": [
+    {
+      "name": "Nicolaas Thiemen Francken",
+      "email": "modules@sunnysideup.co.nz",
+      "role": "lead developer"
+    }
+  ]
 }
